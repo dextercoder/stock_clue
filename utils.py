@@ -6,6 +6,9 @@ import os
 import requests
 import time
 
+# 默认的 DOUBAO_API_KEY，如果没有在环境变量中设置，则使用这个值
+DOUBAO_API_KEY = os.getenv('ARK_API_KEY', '9c1f8d7a-ba9a-45da-9a8d-f893b1e1f6b9')
+
 # 初始化tushare（直接传入token避免文件写入权限问题）
 pro = ts.pro_api('c0df5cc9da343b356dc1e58a4b649053a4b3bbe440bd13129f0d7935')
 
@@ -278,3 +281,113 @@ def get_daily(code):
     except Exception as e:
         print(f"DEBUG: 获取 {code_str} 日线数据失败: {str(e)}")
         return None
+
+
+
+def analyze_by_doubao(code, name):
+    print(f"📡 正在联网分析 {code} {name}")
+
+    prompt = f"""
+你是A股专业投研分析师，必须**联网获取最新真实数据**，分析股票：{code} {name}。
+严格按以下5点输出，不要多余内容，不要格式符号：
+
+【1. 基本面】行业、主营业务、最新业绩、估值、核心竞争力
+【2. 消息面】近7天重要公告、利好、利空、题材催化
+【3. 技术面】周线上升+日线回调形态是否成立
+【4. 综合评级】强烈关注 / 关注 / 观望 / 回避
+【5. 买卖机会】适合买入原因、风险点、目标价、止损参考
+"""
+
+    try:
+        # 尝试导入OpenAI库
+        from openai import OpenAI
+        import os
+        
+        # 从环境变量或配置中获取API KEY
+        api_key = DOUBAO_API_KEY if DOUBAO_API_KEY else os.getenv('ARK_API_KEY')
+        
+        if not api_key:
+            return "AI分析失败：未找到API_KEY"
+        
+        # 创建OpenAI客户端，指向火山方舟API
+        client = OpenAI(
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key=api_key,
+        )
+        
+        # 调用responses.create API
+        response = client.responses.create(
+            model="doubao-seed-2-0-lite-260215",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt
+                        }
+                    ],
+                }
+            ]
+        )
+        
+        # 调试：打印完整响应
+        print(f"DEBUG: API响应: {response}")
+        
+        # 提取响应内容
+        try:
+            if hasattr(response, 'output') and response.output:
+                # 遍历output列表，寻找包含content的输出项（message类型）
+                for output_item in response.output:
+                    if hasattr(output_item, 'content') and output_item.content:
+                        if len(output_item.content) > 0:
+                            if hasattr(output_item.content[0], 'text') and output_item.content[0].text:
+                                return output_item.content[0].text.strip()
+                            return f"AI分析失败：output_item.content[0].text 为None"
+                return f"AI分析失败：output中未找到有效的content"
+        except Exception as e:
+            print(f"DEBUG: 解析output响应失败: {str(e)}")
+            
+        try:
+            if hasattr(response, 'choices') and response.choices:
+                if len(response.choices) > 0:
+                    if hasattr(response.choices[0], 'message') and response.choices[0].message:
+                        if hasattr(response.choices[0].message, 'content') and response.choices[0].message.content:
+                            return response.choices[0].message.content.strip()
+                        return f"AI分析失败：choices[0].message.content 为None"
+                    return f"AI分析失败：choices[0].message 为None"
+                return f"AI分析失败：choices 为空列表"
+        except Exception as e:
+            print(f"DEBUG: 解析choices响应失败: {str(e)}")
+            
+        return f"AI分析失败：无法提取响应内容，响应类型：{type(response).__name__}"
+            
+    except ImportError:
+        return "AI分析失败：未安装openai库，请执行 pip install openai"
+    except Exception as e:
+        return f"AI分析失败：{str(e)}"
+
+# ---------------------- 6. AI分析流程 ----------------------
+def analyze_selected_stocks(selected_stocks):
+    """对技术分析选出的股票进行AI分析"""
+    if not selected_stocks:
+        print("DEBUG: 没有需要AI分析的股票")
+        return []
+    
+    print(f"\n=== AI分析启动，共分析 {len(selected_stocks)} 只股票 ===")
+    
+    analyzed_stocks = []
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    for code, name, price, profit, loss in selected_stocks:
+        print(f"DEBUG: 开始AI分析 {code} {name}")
+        ai_result = analyze_by_doubao(code, name)
+        print(f"DEBUG: {code} AI分析结果: {ai_result[:100]}...")  # 打印结果前100个字符
+        analyzed_stocks.append([code, name, price, profit, loss, ai_result, now])
+        print(f"DEBUG: {code} AI分析完成，结果已添加到记录")
+    
+    print(f"\nDEBUG: AI分析完成，共分析 {len(analyzed_stocks)} 只股票")
+    return analyzed_stocks
+
+
+

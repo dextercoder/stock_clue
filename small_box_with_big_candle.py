@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from mplfinance.original_flavor import candlestick_ohlc
+import utils
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
@@ -14,7 +15,7 @@ def get_stock_name_mapping():
     从指定的Excel文件加载股票名称映射
     返回：字典，键为股票代码，值为股票名称
     """
-    excel_path = '/Users/workspace/trae_source_code/stock_clue/all_stocks_name/A股所有股票代码列表.xlsx'
+    excel_path = 'all_stocks_name/A股所有股票代码列表.xlsx'
     try:
         df = pd.read_excel(excel_path)
         # 创建股票代码到股票名称的映射字典，确保股票代码是6位格式（补前导零）
@@ -27,7 +28,7 @@ def get_stock_name_mapping():
         return {}
 
 class SmallBoxBigCandleAnalyzer:
-    def __init__(self, data_path, lookback_days=20, box_range_threshold=0.15, small_movement_threshold=0.02, small_movement_ratio=0.02, big_candle_ratio=0.05):
+    def __init__(self, data_path, lookback_days=20, box_range_threshold=0.20, small_movement_threshold=0.03, small_movement_ratio=0.50, big_candle_ratio=0.03):
         self.data_path = data_path
         self.lookback_days = lookback_days
         self.box_range_threshold = box_range_threshold  # 箱体价格区间的最大百分比
@@ -284,18 +285,23 @@ class SmallBoxBigCandleAnalyzer:
 if __name__ == "__main__":
     # 设置数据路径
     data_path = './daily_data_cache'
+    # 移除已存在的目录及其内容
+    import shutil
+    if os.path.exists('./small_box_plots'):
+        shutil.rmtree('./small_box_plots')
     
     # 创建分析器实例
     analyzer = SmallBoxBigCandleAnalyzer(
         data_path=data_path,
         lookback_days=30,               # 箱体期天数
-        box_range_threshold=0.10,       # 箱体价格区间最大15%
-        small_movement_threshold=0.02,  # 小波动K线的波动阈值（2%）
-        small_movement_ratio=0.60,      # 小波动K线的比例要求（2%）
+        box_range_threshold=0.15,       # 箱体价格区间最大15%
+        small_movement_threshold=0.03,  # 小波动K线的波动阈值（2%）
+        small_movement_ratio=0.50,      # 小波动K线的比例要求（2%）
         big_candle_ratio=0.05           # 大阳线最小涨幅5%
     )
     
-    # 分析所有股票
+    # 选择运行模式
+    
     analyzer.analyze_all_stocks()
     
     # 保存筛选结果到文件
@@ -304,5 +310,8 @@ if __name__ == "__main__":
         
         # 绘制匹配股票的K线图
         analyzer.plot_all_matching_stocks()
+        
+        # 使用doubao进行AI分析并输出到Excel
+        # analyzer.analyze_with_doubao()
     else:
         print("没有找到符合条件的股票")
