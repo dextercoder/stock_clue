@@ -283,6 +283,93 @@ def get_daily(code):
         return None
 
 
+def get_daily_incremental(code):
+    """增量获取最新股价数据并更新缓存"""
+    code_str = str(code)
+    print(f"DEBUG: 增量获取股票 {code_str} 最新日线数据...")
+    
+    # 创建缓存目录
+    cache_dir = "daily_data_cache"
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    
+    # 缓存文件路径
+    cache_file = os.path.join(cache_dir, f"{code_str}_daily.csv")
+    
+    # 检查缓存文件是否存在
+    if os.path.exists(cache_file):
+        try:
+            # 读取缓存文件
+            df_existing = pd.read_csv(cache_file, parse_dates=['date'], index_col='date')
+            print(f"DEBUG: 读取到缓存数据，共 {len(df_existing)} 条")
+            print(f"DEBUG: 缓存数据日期范围: {df_existing.index.min()} 到 {df_existing.index.max()}")
+            
+            # 计算开始日期（缓存中最新日期的下一天）
+            last_date = df_existing.index.max()
+            start_date = (last_date + datetime.timedelta(days=1)).strftime("%Y%m%d")
+            end_date = datetime.datetime.now().strftime("%Y%m%d")
+            
+            # 检查是否需要更新
+            if start_date > end_date:
+                print(f"DEBUG: 缓存数据已是最新，无需更新")
+                return df_existing
+            
+            print(f"DEBUG: 开始从 {start_date} 到 {end_date} 获取新数据")
+            
+            # 转换为tushare支持的ts_code格式
+            if code_str.startswith("6"):
+                ts_code = f"{code_str}.SH"  # 上海证券交易所
+            else:
+                ts_code = f"{code_str}.SZ"  # 深圳证券交易所
+            
+            # API限流控制
+            api_rate_limit('daily')
+            
+            # 使用tushare获取新数据
+            df_new = call_daily(ts_code, start_date, end_date)
+            
+            if df_new.empty:
+                print(f"DEBUG: 未获取到新数据")
+                return df_existing
+            
+            # 处理新数据
+            df_new = df_new[['trade_date', 'open', 'high', 'low', 'close', 'vol']]
+            df_new.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
+            df_new['date'] = pd.to_datetime(df_new['date'])
+            df_new.set_index('date', inplace=True)
+            df_new.sort_index(inplace=True)
+            
+            print(f"DEBUG: 获取到 {len(df_new)} 条新数据")
+            print(f"DEBUG: 新数据日期范围: {df_new.index.min()} 到 {df_new.index.max()}")
+            
+            # 合并数据
+            df_combined = pd.concat([df_existing, df_new]).sort_index()
+            # 去重，避免重复数据
+            df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
+            
+            print(f"DEBUG: 合并后共 {len(df_combined)} 条数据")
+            print(f"DEBUG: 合并后数据日期范围: {df_combined.index.min()} 到 {df_combined.index.max()}")
+            
+            # 保存到缓存
+            try:
+                df_combined.to_csv(cache_file, encoding='utf-8-sig')
+                print(f"DEBUG: {code_str} 日线数据已更新缓存")
+            except Exception as e:
+                print(f"DEBUG: 保存 {code_str} 日线数据缓存失败: {str(e)}")
+            
+            return df_combined
+            
+        except Exception as e:
+            print(f"DEBUG: 增量更新失败: {str(e)}")
+            # 失败时调用完整获取函数
+            print(f"DEBUG: 尝试使用完整获取函数")
+            return get_daily(code)
+    else:
+        # 缓存文件不存在，调用完整获取函数
+        print(f"DEBUG: 缓存文件不存在，调用完整获取函数")
+        return get_daily(code)
+
+
 
 def analyze_by_doubao(code, name):
     print(f"📡 正在联网分析 {code} {name}")
