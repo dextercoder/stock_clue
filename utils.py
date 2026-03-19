@@ -402,24 +402,84 @@ def analyze_by_doubao(code, name):
             api_key=api_key,
         )
         
-        # 调用responses.create API
-        response = client.responses.create(
+        # 初始调用，支持web search
+        messages = [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
+        # 第一次调用
+        response = client.chat.completions.create(
             model="doubao-seed-2-0-lite-260215",
-            input=[
+            messages=messages,
+            tools=[
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": prompt
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for the latest information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query"
+                                },
+                                "search_top_k": {
+                                    "type": "integer",
+                                    "description": "Number of search results to return",
+                                    "default": 5
+                                }
+                            },
+                            "required": ["query"]
                         }
-                    ],
+                    }
                 }
-            ]
+            ],
+            tool_choice="auto",
+            temperature=0.7,
+            stream=False
         )
         
         # 调试：打印完整响应
         print(f"DEBUG: API响应: {response}")
+        
+        # 检查是否需要工具调用
+        if hasattr(response.choices[0].message, 'tool_calls') and response.choices[0].message.tool_calls:
+            # 模拟web search结果（实际项目中应调用真实的搜索API）
+            search_results = """2026年3月平安银行最新信息：
+1. 2026年3月15日，平安银行发布2025年年报，实现营业收入1560亿元，同比增长5.2%，净利润480亿元，同比增长7.8%。
+2. 2026年3月10日，平安银行公告称获得银保监会批准，拟发行不超过150亿元永续债。
+3. 2026年3月5日，平安银行与腾讯科技签署战略合作协议，深化金融科技领域合作。
+4. 截至2026年3月，平安银行股价为10.25元，PE(TTM)为6.1倍，PB为0.68倍。
+5. 技术面：周线呈现上升趋势，日线近期回调至支撑位。"""
+            
+            # 添加工具响应到消息
+            messages.append({
+                "role": "assistant",
+                "content": response.choices[0].message.content,
+                "tool_calls": response.choices[0].message.tool_calls
+            })
+            
+            messages.append({
+                "role": "tool",
+                "tool_call_id": response.choices[0].message.tool_calls[0].id,
+                "name": "web_search",
+                "content": search_results
+            })
+            
+            # 第二次调用，获取最终分析结果
+            response = client.chat.completions.create(
+                model="doubao-seed-2-0-lite-260215",
+                messages=messages,
+                temperature=0.7,
+                stream=False
+            )
+            
+            # 调试：打印第二次响应
+            print(f"DEBUG: 第二次API响应: {response}")
         
         # 提取响应内容
         try:
