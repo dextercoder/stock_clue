@@ -29,7 +29,7 @@ def get_stock_name_mapping():
 
 
 class BigCandlePullbackAnalyzer:
-    def __init__(self, data_path, lookback_days=20, big_candle_ratio=0.05, pullback_threshold=0.02):
+    def __init__(self, data_path, lookback_days=60, big_candle_ratio=0.05, pullback_threshold=0.02):
         self.data_path = data_path
         self.lookback_days = lookback_days  # 回溯天数
         self.big_candle_ratio = big_candle_ratio  # 大阳线的最小涨幅比例
@@ -167,32 +167,37 @@ class BigCandlePullbackAnalyzer:
         if not big_candle_candidates:
             return None
         
-        # 按日期从新到旧排序，取最近的大阳线
-        big_candle_candidates.sort(key=lambda x: x[1]['date'], reverse=True)
-        big_candle_index, big_candle, big_candle_change = big_candle_candidates[0]
+        # 计算所有大阳线的底部价格，并找到最低的那个
+        big_candle_bottoms = []
+        for idx, candle, change in big_candle_candidates:
+            bottom = min(candle['open'], candle['close'])
+            big_candle_bottoms.append((idx, candle, change, bottom))
         
-        # 计算大阳线的底部价格（开盘价和收盘价中的较低者）
-        big_candle_bottom = min(big_candle['open'], big_candle['close'])
-        big_candle_top = max(big_candle['open'], big_candle['close'])
+        # 按底部价格从低到高排序，取最低的大阳线
+        big_candle_bottoms.sort(key=lambda x: x[3])
+        min_bottom_idx, min_bottom_candle, min_bottom_change, min_bottom_price = big_candle_bottoms[0]
         
-        # 获取大阳线之后的数据
-        after_big_candle = recent_data.iloc[big_candle_index + 1:]
+        # 计算最低大阳线的顶部价格
+        min_bottom_top = max(min_bottom_candle['open'], min_bottom_candle['close'])
         
-        if len(after_big_candle) == 0:
+        # 获取最低大阳线之后的数据
+        after_min_bottom = recent_data.iloc[min_bottom_idx + 1:]
+        
+        if len(after_min_bottom) == 0:
             return None
         
-        # 检查是否回调到阳线底部
-        # 计算最近收盘价与大阳线底部的差距
+        # 检查是否回调到最低大阳线底部
+        # 计算最近收盘价与最低大阳线底部的差距
         latest_close = recent_data.iloc[-1]['close']
-        pullback_ratio = (latest_close - big_candle_bottom) / big_candle_bottom
+        pullback_ratio = (latest_close - min_bottom_price) / min_bottom_price
         
-        # 条件3: 最近收盘价接近大阳线底部（在阈值范围内）
+        # 条件3: 最近收盘价接近最低大阳线底部（在阈值范围内）
         if not (-self.pullback_threshold <= pullback_ratio <= self.pullback_threshold):
             return None
         
-        # 条件4: 回调过程中没有跌破大阳线底部过多
-        min_after_close = after_big_candle['close'].min()
-        max_drawdown = (min_after_close - big_candle_bottom) / big_candle_bottom
+        # 条件4: 回调过程中没有跌破最低大阳线底部过多
+        min_after_close = after_min_bottom['close'].min()
+        max_drawdown = (min_after_close - min_bottom_price) / min_bottom_price
         if max_drawdown < -0.05:  # 最大回调不超过5%
             return None
         
@@ -206,18 +211,19 @@ class BigCandlePullbackAnalyzer:
         pattern_info = {
             'stock_code': stock_code,
             'stock_name': stock_name,
-            'big_candle_date': big_candle['date'],
-            'big_candle_open': big_candle['open'],
-            'big_candle_high': big_candle['high'],
-            'big_candle_low': big_candle['low'],
-            'big_candle_close': big_candle['close'],
-            'big_candle_change': big_candle_change,
-            'big_candle_bottom': big_candle_bottom,
-            'big_candle_top': big_candle_top,
+            'big_candle_date': min_bottom_candle['date'],
+            'big_candle_open': min_bottom_candle['open'],
+            'big_candle_high': min_bottom_candle['high'],
+            'big_candle_low': min_bottom_candle['low'],
+            'big_candle_close': min_bottom_candle['close'],
+            'big_candle_change': min_bottom_change,
+            'big_candle_bottom': min_bottom_price,
+            'big_candle_top': min_bottom_top,
             'latest_date': recent_data.iloc[-1]['date'],
             'latest_close': latest_close,
             'pullback_ratio': pullback_ratio,
-            'max_drawdown': max_drawdown
+            'max_drawdown': max_drawdown,
+            'total_big_candles': len(big_candle_candidates)  # 记录找到的大阳线数量
         }
         return pattern_info
     
@@ -241,14 +247,15 @@ class BigCandlePullbackAnalyzer:
                 # 查找符合条件的模式
                 pattern_info = self.find_big_candle_with_pullback(df, stock_code=stock_code)
                 if pattern_info:
-                    print(f"找到匹配模式的股票: {pattern_info['stock_name']} ({pattern_info['stock_code']})")
-                    print(f"  大阳线日期: {pattern_info['big_candle_date'].strftime('%Y-%m-%d')}")
-                    print(f"  大阳线涨幅: {pattern_info['big_candle_change']:.2%}")
-                    print(f"  大阳线底部: {pattern_info['big_candle_bottom']:.2f}")
-                    print(f"  最新收盘价: {pattern_info['latest_close']:.2f}")
-                    print(f"  回调比例: {pattern_info['pullback_ratio']:.2%}")
-                    print()
-                    self.matching_stocks.append((df, pattern_info))
+                        print(f"找到匹配模式的股票: {pattern_info['stock_name']} ({pattern_info['stock_code']})")
+                        print(f"  过去60天内大阳线数量: {pattern_info['total_big_candles']}")
+                        print(f"  最低大阳线日期: {pattern_info['big_candle_date'].strftime('%Y-%m-%d')}")
+                        print(f"  最低大阳线涨幅: {pattern_info['big_candle_change']:.2%}")
+                        print(f"  最低大阳线底部: {pattern_info['big_candle_bottom']:.2f}")
+                        print(f"  最新收盘价: {pattern_info['latest_close']:.2f}")
+                        print(f"  回调比例: {pattern_info['pullback_ratio']:.2%}")
+                        print()
+                        self.matching_stocks.append((df, pattern_info))
             
             except Exception as e:
                 print(f"分析股票 {stock_file} 时出错: {str(e)}")
@@ -352,14 +359,15 @@ class BigCandlePullbackAnalyzer:
             save_data.append({
                 '股票代码': pattern_info['stock_code'],
                 '股票名称': pattern_info['stock_name'],
-                '大阳线日期': pattern_info['big_candle_date'].strftime('%Y-%m-%d'),
-                '大阳线开盘价': pattern_info['big_candle_open'],
-                '大阳线最高价': pattern_info['big_candle_high'],
-                '大阳线最低价': pattern_info['big_candle_low'],
-                '大阳线收盘价': pattern_info['big_candle_close'],
-                '大阳线涨幅': pattern_info['big_candle_change'],
-                '大阳线底部': pattern_info['big_candle_bottom'],
-                '大阳线顶部': pattern_info['big_candle_top'],
+                '过去60天大阳线数量': pattern_info['total_big_candles'],
+                '最低大阳线日期': pattern_info['big_candle_date'].strftime('%Y-%m-%d'),
+                '最低大阳线开盘价': pattern_info['big_candle_open'],
+                '最低大阳线最高价': pattern_info['big_candle_high'],
+                '最低大阳线最低价': pattern_info['big_candle_low'],
+                '最低大阳线收盘价': pattern_info['big_candle_close'],
+                '最低大阳线涨幅': pattern_info['big_candle_change'],
+                '最低大阳线底部': pattern_info['big_candle_bottom'],
+                '最低大阳线顶部': pattern_info['big_candle_top'],
                 '最新日期': pattern_info['latest_date'].strftime('%Y-%m-%d'),
                 '最新收盘价': pattern_info['latest_close'],
                 '回调比例': pattern_info['pullback_ratio'],
